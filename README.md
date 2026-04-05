@@ -1,16 +1,26 @@
 # CoLive SG Backend — OneMap Web Service
 
-A NestJS-based web service that integrates with Singapore's **OneMap API** — providing geocoding, reverse geocoding, routing, and nearby places search behind a unified, validated, and well-tested REST API with proper authentication and caching.
+A **Dockerized NestJS** web service that integrates with Singapore's **OneMap API** — providing geocoding, reverse geocoding, routing, and nearby places search behind a unified, validated, and well-tested REST API with proper authentication, caching, and PostgreSQL persistence.
 
 ---
 
 ## Table of Contents
 
+- [Quick Start (Docker)](#quick-start-docker)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+  - [Docker Compose Configuration](#docker-compose-configuration)
 - [Running the Application](#running-the-application)
+  - [Docker Compose (Recommended)](#docker-compose-recommended)
+  - [Local Development (Without Docker)](#local-development-without-docker)
+- [Docker Usage Guide](#docker-usage-guide)
+  - [Common Commands](#common-commands)
+  - [Database Management](#database-management)
+  - [Debugging](#debugging)
+  - [Development Workflow](#development-workflow)
 - [API Reference](#api-reference)
   - [Search](#1-search)
   - [Reverse Geocode](#2-reverse-geocode)
@@ -23,22 +33,76 @@ A NestJS-based web service that integrates with Singapore's **OneMap API** — p
 - [Testing](#testing)
 - [Project Structure](#project-structure)
 - [Deployment](#deployment)
+  - [Production Docker](#production-docker)
+  - [Environment Variables for Production](#environment-variables-for-production)
+- [Docker Specifications](#docker-specifications)
+  - [System Requirements](#system-requirements)
+  - [Image Details](#image-details)
+  - [Resource Limits](#resource-limits)
+  - [Network Configuration](#network-configuration)
+  - [Volume Strategy](#volume-strategy)
+  - [Security Hardening](#security-hardening)
 - [API Design Decisions](#api-design-decisions)
+- [Resources](#resources)
+- [License](#license)
+
+---
+
+## Quick Start (Docker)
+
+Get the entire stack running in under 2 minutes:
+
+```bash
+# 1. Clone and setup
+git clone <repository-url>
+cd co-live-sg-backend
+cp .env.example .env
+
+# 2. Start everything (app + PostgreSQL)
+docker compose up
+
+# 3. Access the application
+open http://localhost:3000
+```
+
+That's it! The NestJS app is running with hot reload, connected to PostgreSQL.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐
-│   Client     │────▶│  NestJS App      │────▶│  OneMap API (Singapore)  │
-│  (Browser/   │     │  OneMapModule    │     │  developers.onemap.sg    │
-│   Mobile)    │     │                  │     │  - Search                │
-└──────────────┘     │  Controller      │     │  - Reverse Geocoding     │
-                     │  Service         │     │  - Routing               │
-                     │  DTOs/Validation │     │  - Nearby Places         │
-                     │  Token Cache     │     └──────────────────────────┘
-                     └──────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                     Docker Compose Stack                          │
+│                                                                    │
+│  ┌─────────────────┐         ┌──────────────────────────┐        │
+│  │   Client        │         │    NestJS Application    │        │
+│  │   (Browser/     │────────▶│  ┌────────────────────┐  │        │
+│  │    Mobile)      │ HTTP    │  │  OneMapModule      │  │        │
+│  │                 │ :3000   │  │  Controller        │  │        │
+│  └─────────────────┘         │  │  Service           │  │        │
+│                              │  │  DTOs/Validation   │  │        │
+│                              │  │  TypeORM/DB Pool   │  │        │
+│                              │  └─────────┬──────────┘  │        │
+│                              └────────────┼─────────────┘        │
+│                                           │ TCP/IP                │
+│                                           │ port 5432             │
+│                              ┌────────────▼─────────────┐        │
+│                              │    PostgreSQL 16         │        │
+│                              │  ┌────────────────────┐  │        │
+│                              │  │  colive_sg_dev DB  │  │        │
+│                              │  │  Persistent Volume │  │        │
+│                              │  │  Auto-init Scripts │  │        │
+│                              │  └────────────────────┘  │        │
+│                              └──────────────────────────┘        │
+│                                                                    │
+│  External Services (Internet):                                    │
+│  ┌──────────────────────────────────────────────────────┐        │
+│  │  OneMap API (developers.onemap.sg)                   │        │
+│  │  - Search  •  Reverse Geocoding  •  Routing         │        │
+│  │  - Nearby Places  •  Token Authentication            │        │
+│  └──────────────────────────────────────────────────────┘        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 The service follows a **layered architecture** with NestJS best practices:
@@ -48,64 +112,227 @@ The service follows a **layered architecture** with NestJS best practices:
 | **Controller** | HTTP request handling, routing, response formatting, validation pipes |
 | **Service** | Business logic, external API calls, token caching, error handling |
 | **DTOs** | Request validation via `class-validator` and `class-transformer` |
+| **Database** | PostgreSQL persistence via TypeORM with auto-migrations |
 | **Interfaces** | TypeScript type definitions for OneMap API responses |
 
 ### Key Features
 
-- **Token Caching**: OneMap tokens are cached for 24 hours to avoid unnecessary API calls
-- **Retry Logic**: HTTP requests include automatic retries with exponential backoff
-- **Input Validation**: All endpoints use DTOs with strict validation
-- **Coordinate Validation**: Route endpoints validate coordinate formats before API calls
-- **Consistent Response Format**: All endpoints return a uniform JSON envelope
+- **🐳 Dockerized**: Complete Docker Compose stack with PostgreSQL
+- **🔄 Hot Reload**: Instant code changes without rebuilds
+- **🗄️ PostgreSQL**: TypeORM integration with auto entity loading
+- **🔐 Token Caching**: OneMap tokens cached for 24 hours
+- **♻️ Retry Logic**: HTTP requests with exponential backoff
+- **✅ Input Validation**: Strict DTO validation on all endpoints
+- **📊 Consistent Responses**: Uniform JSON envelope for all endpoints
+- **🧪 Well Tested**: 55+ passing tests with ~92% coverage
 
 ---
 
 ## Prerequisites
 
-| Tool | Version |
-|---|---|
-| Node.js | >= 20.x |
-| npm | >= 10.x |
+### For Docker (Recommended)
+
+| Tool | Version | Purpose |
+|---|---|---|
+| Docker Desktop | >= 24.x | Container runtime |
+| Docker Compose | >= 2.20.x | Multi-container orchestration |
+
+**Note**: Docker Compose is included with Docker Desktop on macOS.
+
+### For Local Development (Without Docker)
+
+| Tool | Version | Purpose |
+|---|---|---|
+| Node.js | >= 20.x | JavaScript runtime |
+| npm | >= 10.x | Package manager |
+| PostgreSQL | >= 15.x | Database (optional, for DB features) |
 
 ---
 
 ## Installation
 
+### Docker Installation
+
+No manual installation needed! Docker pulls all dependencies automatically:
+
+```bash
+# Just start Docker Compose - it handles everything
+docker compose up
+```
+
+### Local Installation
+
 ```bash
 # Install dependencies
 npm install
+
+# Copy environment file
+cp .env.example .env
 ```
 
 ---
 
 ## Configuration
 
-Copy the `.env` file and adjust values for your environment:
+### Environment Variables
 
-```env
-# OneMap API Configuration
-ONEMAP_BASE_URL=https://developers.onemap.sg/privateapi
-ONEMAP_AUTH_URL=https://developers.onemap.sg/privateapi/auth/token
-ONEMAP_EMAIL=your_registered_email@example.com
-ONEMAP_PASSWORD=your_password
+All configuration is managed through environment variables. Copy `.env.example` to `.env` and adjust:
 
-# Server Configuration
-PORT=3000
+```bash
+cp .env.example .env
 ```
 
-| Variable | Description | Default |
-|---|---|---|
-| `ONEMAP_BASE_URL` | OneMap API base URL | `https://developers.onemap.sg/privateapi` |
-| `ONEMAP_AUTH_URL` | OneMap authentication endpoint | `https://developers.onemap.sg/privateapi/auth/token` |
-| `ONEMAP_EMAIL` | Your OneMap registered email | _(empty — uses mock token)_ |
-| `ONEMAP_PASSWORD` | Your OneMap password | _(empty — uses mock token)_ |
-| `PORT` | HTTP port the server listens on | `3000` |
+#### Complete Environment Reference
 
-**Note**: If `ONEMAP_EMAIL` and `ONEMAP_PASSWORD` are not configured, the service will use mock tokens for development. For production use, register at [OneMap Developer Portal](https://www.onemap.gov.sg/) and provide your credentials.
+```env
+# ==========================================
+# Application Configuration
+# ==========================================
+PORT=3000                    # HTTP port the server listens on
+NODE_ENV=development         # Environment: development | production | test
+
+# ==========================================
+# Database Configuration (PostgreSQL)
+# ==========================================
+DATABASE_HOST=localhost      # Database host (use "db" when in Docker)
+DATABASE_PORT=5432           # PostgreSQL port
+DATABASE_USER=postgres       # Database username
+DATABASE_PASSWORD=postgres   # Database password
+DATABASE_NAME=colive_sg_dev  # Database name
+
+# ==========================================
+# OneMap API Configuration
+# ==========================================
+ONEMAP_API_URL=https://www.onemap.gov.sg/api       # OneMap API base URL
+ONEMAP_CLIENT_ID=your_client_id                    # Your OneMap client ID
+ONEMAP_CLIENT_SECRET=your_client_secret            # Your OneMap client secret
+```
+
+| Variable | Description | Default | Required |
+|---|---|---|---|
+| `PORT` | HTTP port | `3000` | No |
+| `NODE_ENV` | Environment mode | `development` | No |
+| `DATABASE_HOST` | Database host | `localhost` | No* |
+| `DATABASE_PORT` | Database port | `5432` | No |
+| `DATABASE_USER` | DB username | `postgres` | No |
+| `DATABASE_PASSWORD` | DB password | `postgres` | No |
+| `DATABASE_NAME` | Database name | `colive_sg_dev` | No |
+| `ONEMAP_API_URL` | OneMap API URL | _(see above)_ | No |
+| `ONEMAP_CLIENT_ID` | OneMap client ID | _(empty)_ | No |
+| `ONEMAP_CLIENT_SECRET` | OneMap client secret | _(empty)_ | No |
+
+**Note**: Database variables are auto-configured in Docker Compose. For local development without Docker, ensure PostgreSQL is running and update `DATABASE_HOST` accordingly.
+
+### Docker Compose Configuration
+
+The `docker-compose.yml` file orchestrates the entire stack:
+
+```yaml
+services:
+  app:                          # NestJS application
+    build:
+      context: .                # Build from current directory
+      target: dev               # Use development stage
+    ports:
+      - "3000:3000"             # Map host:container ports
+    volumes:
+      - .:/app                  # Bind mount source code
+      - /app/node_modules       # Protect container dependencies
+    environment:                # Environment variables
+      - DATABASE_HOST=db        # Connect to 'db' service
+      - DATABASE_PORT=5432
+      # ... more vars
+    depends_on:
+      db:
+        condition: service_healthy  # Wait for DB health check
+    command: npm run start:dev      # Override default command
+
+  db:                           # PostgreSQL database
+    image: postgres:16-alpine   # Specific version (never :latest)
+    ports:
+      - "127.0.0.1:5432:5432"   # Localhost-only exposure
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: colive_sg_dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data        # Persistent storage
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:                  # Health check configuration
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:                       # Named volume for data persistence
+```
+
+#### Development Override
+
+`docker-compose.override.yml` (auto-loaded in development):
+
+```yaml
+services:
+  app:
+    environment:
+      - DEBUG=app:*             # Enable debug logging
+      - LOG_LEVEL=debug
+    ports:
+      - "9229:9229"             # Node.js debugger port
+    security_opt:
+      - no-new-privileges:true  # Security hardening
+```
 
 ---
 
 ## Running the Application
+
+### Docker Compose (Recommended)
+
+#### Quick Start
+
+```bash
+# Start all services (app + PostgreSQL)
+docker compose up
+
+# Start in detached mode (background)
+docker compose up -d
+
+# Start with build (after package.json changes)
+docker compose up --build
+```
+
+#### What Happens on Startup
+
+1. **Docker pulls PostgreSQL 16 Alpine** image (if not cached)
+2. **Docker builds the NestJS app** using the `dev` stage of the Dockerfile
+3. **PostgreSQL starts** and runs health checks
+4. **NestJS waits** for PostgreSQL to become healthy
+5. **Init scripts run** (`scripts/init-db.sql`) on first database creation
+6. **NestJS connects** to PostgreSQL via TypeORM
+7. **App starts** with hot reload on port 3000
+
+#### Verify Everything is Running
+
+```bash
+# Check service status
+docker compose ps
+
+# Expected output:
+# NAME                    IMAGE                  STATUS
+# colive-sg-backend-app-1   colive-sg-backend-app   Up (healthy)
+# colive-sg-backend-db-1    postgres:16-alpine      Up (healthy)
+
+# View logs
+docker compose logs -f app    # Follow app logs
+docker compose logs -f db     # Follow database logs
+
+# Test the API
+curl http://localhost:3000
+```
+
+### Local Development (Without Docker)
 
 ```bash
 # Development mode (with hot reload)
@@ -118,7 +345,266 @@ npm run start:prod
 npm run start:debug
 ```
 
+**Note**: For local development with database features, ensure PostgreSQL is running and update `DATABASE_HOST=localhost` in your `.env` file.
+
 The server starts on `http://localhost:3000` by default.
+
+---
+
+## Docker Usage Guide
+
+### Common Commands
+
+#### Service Management
+
+```bash
+# Start services (foreground)
+docker compose up
+
+# Start services (background)
+docker compose up -d
+
+# Stop services (preserves data)
+docker compose down
+
+# Stop and remove volumes (DESTRUCTIVE - deletes database)
+docker compose down -v
+
+# Rebuild and restart
+docker compose up --build
+
+# Force full rebuild (no cache)
+docker compose build --no-cache app
+```
+
+#### Viewing Logs
+
+```bash
+# All services logs
+docker compose logs
+
+# Follow logs in real-time
+docker compose logs -f
+
+# Last 50 lines from app
+docker compose logs --tail=50 app
+
+# Database logs only
+docker compose logs -f db
+
+# Logs with timestamps
+docker compose logs -ft app
+```
+
+#### Executing Commands in Containers
+
+```bash
+# Shell into the app container
+docker compose exec app sh
+
+# Access PostgreSQL CLI
+docker compose exec db psql -U postgres -d colive_sg_dev
+
+# Run database queries directly
+docker compose exec db psql -U postgres -d colive_sg_dev -c "SELECT * FROM users;"
+
+# Run npm commands inside container
+docker compose exec app npm test
+docker compose exec app npm run build
+```
+
+#### Inspecting Services
+
+```bash
+# List running services
+docker compose ps
+
+# Show resource usage
+docker stats
+
+# Inspect container processes
+docker compose top
+
+# View service configuration
+docker compose config
+
+# Check DNS resolution inside container
+docker compose exec app nslookup db
+
+# Test connectivity between services
+docker compose exec app wget -qO- http://localhost:3000/
+```
+
+### Database Management
+
+#### Connecting to PostgreSQL
+
+```bash
+# Via psql in container
+docker compose exec db psql -U postgres -d colive_sg_dev
+
+# Via psql from host (if port 5432 is exposed)
+psql -h localhost -U postgres -d colive_sg_dev
+
+# Via GUI tools (TablePlus, pgAdmin, DBeaver)
+# Host: localhost
+# Port: 5432
+# User: postgres
+# Password: postgres
+# Database: colive_sg_dev
+```
+
+#### Common Database Operations
+
+```sql
+-- List all tables
+\dt
+
+-- Describe a table
+\d table_name
+
+-- View database size
+SELECT pg_size_pretty(pg_database_size('colive_sg_dev'));
+
+-- View active connections
+SELECT * FROM pg_stat_activity;
+
+-- Backup database
+docker compose exec db pg_dump -U postgres colive_sg_dev > backup.sql
+
+-- Restore database
+docker compose exec -T db psql -U postgres colive_sg_dev < backup.sql
+```
+
+#### Database Initialization
+
+The file `scripts/init-db.sql` runs automatically when the PostgreSQL container is **first created**. It does NOT run on subsequent starts.
+
+```sql
+-- scripts/init-db.sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Add your schema here
+-- CREATE TABLE users (...);
+```
+
+To re-run init scripts:
+```bash
+# WARNING: This deletes all data!
+docker compose down -v
+docker compose up
+```
+
+### Debugging
+
+#### Enable Debug Mode
+
+Debug mode is already enabled in `docker-compose.override.yml`:
+
+```yaml
+environment:
+  - DEBUG=app:*
+  - LOG_LEVEL=debug
+ports:
+  - "9229:9229"  # Node.js inspector
+```
+
+#### Attach Node.js Debugger
+
+```bash
+# Start with debug mode
+docker compose up
+
+# Open Chrome and navigate to:
+chrome://inspect
+
+# Add target: localhost:9229
+# Click "inspect" to open DevTools
+```
+
+#### Debug Common Issues
+
+```bash
+# Check if database is healthy
+docker compose exec db pg_isready -U postgres
+
+# Check environment variables in container
+docker compose exec app env | grep DATABASE
+
+# View TypeScript compilation errors
+docker compose logs app | grep ERROR
+
+# Check network connectivity
+docker compose exec app ping db
+
+# Inspect Docker network
+docker network inspect co-live-sg-backend_default
+```
+
+### Development Workflow
+
+#### Code Changes
+
+1. **Edit code** on your host machine (your IDE)
+2. **NestJS detects changes** via volume mount
+3. **Auto-recompiles** and restarts (usually < 2 seconds)
+4. **Refresh browser** — changes are live
+
+**No rebuild or restart needed!**
+
+```
+Host Machine                    Docker Container
+┌──────────────┐                ┌──────────────────┐
+│  VS Code     │  Volume Mount  │  NestJS App      │
+│  (Edit .ts)  │───────────────▶│  (Watch & Reload)│
+│              │   .:/app       │                  │
+└──────────────┘                └──────────────────┘
+```
+
+#### Adding Dependencies
+
+```bash
+# 1. Add package (on host machine)
+npm install <package-name>
+
+# 2. Rebuild container
+docker compose up --build
+
+# OR restart container (picks up new node_modules)
+docker compose restart app
+```
+
+#### Database Schema Changes
+
+```bash
+# Option 1: Update init script (for fresh databases)
+# Edit scripts/init-db.sql, then:
+docker compose down -v
+docker compose up
+
+# Option 2: Run migration manually (for existing databases)
+docker compose exec db psql -U postgres -d colive_sg_dev -f scripts/migration.sql
+
+# Option 3: Use TypeORM migrations (recommended for production)
+docker compose exec app npm run typeorm migration:run
+```
+
+#### Cleaning Up
+
+```bash
+# Remove stopped containers
+docker compose down
+
+# Remove containers + volumes (deletes data!)
+docker compose down -v
+
+# Remove all Docker images, containers, networks
+docker system prune -a
+
+# Remove only unused volumes
+docker volume prune
+```
 
 ---
 
@@ -581,40 +1067,71 @@ src/
 
 ## Deployment
 
-### Build for Production
+### Production Docker
+
+#### Build Production Image
 
 ```bash
-npm run build
+# Build with production target (minimal, secure image)
+docker build --target production -t colive-sg-backend:prod .
+
+# Verify image size (should be ~150MB)
+docker images colive-sg-backend:prod
 ```
 
-This compiles TypeScript to JavaScript in the `dist/` directory.
-
-### Run in Production
+#### Run Production Stack
 
 ```bash
-npm run start:prod
+# Use production compose file
+docker compose -f docker-compose.yml build --target production
+
+# Run with production environment
+docker compose -f docker-compose.yml up -d
 ```
 
-### Docker (Optional)
+#### Production Docker Compose Example
 
-Create a `Dockerfile`:
+```yaml
+# docker-compose.prod.yml
+services:
+  app:
+    build:
+      target: production
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_HOST=db
+      - DATABASE_PASSWORD=${DB_PASSWORD}  # Use strong password
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
 
-```dockerfile
-FROM node:22-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: colive_sg_prod
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    # Remove port exposure - only accessible within Docker network
+    # ports:
+    #   - "127.0.0.1:5432:5432"
 
-FROM node:22-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY --from=builder /app/dist ./dist
-COPY .env .env
-EXPOSE 3000
-CMD ["node", "dist/main"]
+volumes:
+  pgdata_prod:
+```
+
+Run with:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ### Environment Variables for Production
@@ -622,13 +1139,260 @@ CMD ["node", "dist/main"]
 Ensure these are set in your deployment environment:
 
 ```env
-OPENMAP_NOMINATIM_URL=https://nominatim.openstreetmap.org
-OPENMAP_OSRM_URL=https://router.project-osrm.org/route/v1
-OPENMAP_OVERPASS_URL=https://overpass-api.de/api
-OPENMAP_TOKEN_URL=https://your-auth-provider.com/token   # if using auth
-OPENMAP_API_KEY=your-api-key                             # if using auth
+# Application
+NODE_ENV=production
 PORT=3000
+
+# Database
+DATABASE_HOST=db
+DATABASE_PORT=5432
+DATABASE_USER=postgres
+DATABASE_PASSWORD=<strong-password>
+DATABASE_NAME=colive_sg_prod
+
+# OneMap API
+ONEMAP_API_URL=https://www.onemap.gov.sg/api
+ONEMAP_CLIENT_ID=<your-client-id>
+ONEMAP_CLIENT_SECRET=<your-client-secret>
 ```
+
+**Security Notes**:
+- Use strong, randomly generated database passwords
+- Never commit `.env` files to version control
+- Use Docker secrets or your orchestrator's secret management
+- Enable SSL/TLS for database connections in production
+
+### Deployment Platforms
+
+#### Docker Swarm
+
+```bash
+docker swarm init
+docker stack deploy -c docker-compose.prod.yml colive-sg
+```
+
+#### Kubernetes
+
+Use tools like `kompose` to convert Docker Compose to Kubernetes manifests:
+```bash
+kompose convert -f docker-compose.yml
+kubectl apply -f .
+```
+
+#### Cloud Run / ECS / EKS
+
+Build and push to container registry:
+```bash
+docker tag colive-sg-backend:prod gcr.io/PROJECT_ID/colive-sg-backend
+docker push gcr.io/PROJECT_ID/colive-sg-backend
+```
+
+---
+
+## Docker Specifications
+
+### System Requirements
+
+| Resource | Minimum | Recommended |
+|---|---|---|
+| **CPU** | 2 cores | 4+ cores |
+| **RAM** | 2 GB | 4+ GB |
+| **Disk** | 5 GB | 10+ GB |
+| **Docker** | 24.x | Latest |
+| **Docker Compose** | 2.20.x | Latest |
+
+### Image Details
+
+#### Development Image
+
+| Metric | Value |
+|---|---|
+| **Base** | `node:22.12-alpine3.20` |
+| **Size** | ~800 MB |
+| **User** | root (dev only) |
+| **Layers** | ~15 |
+| **Includes** | Source code, dev dependencies, TypeScript compiler |
+
+#### Production Image
+
+| Metric | Value |
+|---|---|
+| **Base** | `node:22.12-alpine3.20` |
+| **Size** | ~150 MB |
+| **User** | `appuser` (UID 1001, non-root) |
+| **Layers** | ~8 |
+| **Includes** | Compiled JS, production dependencies only |
+
+### Resource Limits
+
+#### Default (Development)
+
+No explicit limits — uses available host resources.
+
+#### Production (Recommended)
+
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: "1.0"
+      memory: 512M
+    reservations:
+      cpus: "0.25"
+      memory: 128M
+```
+
+| Resource | Limit | Reason |
+|---|---|---|
+| CPU | 1.0 core | Prevents CPU starvation of other services |
+| Memory | 512 MB | NestJS typically uses 150-300 MB |
+| Disk | Depends on volume | Monitor `pgdata` volume growth |
+
+### Network Configuration
+
+#### Docker Network
+
+```yaml
+# Default network created by Docker Compose
+networks:
+  default:
+    name: co-live-sg-backend_default
+    driver: bridge
+```
+
+#### Port Mapping
+
+| Service | Container Port | Host Port | Protocol | Access |
+|---|---|---|---|---|
+| **App** | 3000 | 3000 | TCP | `localhost:3000` |
+| **App (Debug)** | 9229 | 9229 | TCP | `localhost:9229` (dev only) |
+| **DB** | 5432 | 5432 | TCP | `127.0.0.1:5432` (localhost only) |
+
+**Security**: Database port is bound to `127.0.0.1` only — not accessible from other network interfaces.
+
+#### Service Discovery
+
+Services communicate via Docker DNS using service names:
+
+```
+NestJS App → PostgreSQL
+  DATABASE_HOST=db
+  DATABASE_PORT=5432
+  Connection: postgres://postgres:postgres@db:5432/colive_sg_dev
+```
+
+### Volume Strategy
+
+| Volume | Type | Mount Point | Purpose | Persistence |
+|---|---|---|---|---|
+| `./:/app` | Bind mount | `/app` | Source code (hot reload) | Host filesystem |
+| `/app/node_modules` | Anonymous volume | `/app/node_modules` | Protect container deps | Container lifecycle |
+| `pgdata` | Named volume | `/var/lib/postgresql/data` | Database files | Docker-managed |
+| `./scripts/init-db.sql` | Bind mount | `/docker-entrypoint-initdb.d/init.sql` | DB initialization | Host filesystem |
+
+**Volume Lifecycle**:
+- **Bind mounts**: Reflect host filesystem changes instantly
+- **Anonymous volumes**: Created on container start, removed on `docker compose down -v`
+- **Named volumes**: Persist across container recreation, managed by Docker
+
+### Security Hardening
+
+#### Dockerfile Security
+
+```dockerfile
+# ✅ Specific base image version (no :latest)
+FROM node:22.12-alpine3.20
+
+# ✅ Non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
+USER appuser
+
+# ✅ Minimal production image (no dev deps, no source code)
+COPY --from=build --chown=appuser:appgroup /app/dist ./dist
+COPY --from=build --chown=appuser:appgroup /app/node_modules ./node_modules
+
+# ✅ Health check
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3000/ || exit 1
+```
+
+#### Compose Security
+
+```yaml
+# ✅ Database port bound to localhost only
+ports:
+  - "127.0.0.1:5432:5432"
+
+# ✅ No new privileges
+security_opt:
+  - no-new-privileges:true
+
+# ✅ Health checks ensure service readiness
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U postgres"]
+  interval: 5s
+  timeout: 3s
+  retries: 5
+```
+
+#### Secret Management
+
+```bash
+# ✅ Use .env files (gitignored)
+.env                    # Local development
+.env.production         # Production (not committed)
+
+# ✅ Pass secrets via environment (not in image)
+docker compose up --env-file .env.production
+
+# ❌ Never hardcode secrets
+# ENV DATABASE_PASSWORD=supersecret    # NEVER DO THIS
+```
+
+#### .dockerignore
+
+Excludes sensitive/unnecessary files from build context:
+
+```
+node_modules
+.git
+.env
+.env.*
+!.env.example
+dist
+coverage
+*.log
+.next
+```
+
+### Dockerfile Stages
+
+| Stage | Base Image | Purpose | Output |
+|---|---|---|---|
+| `deps` | `node:22.12-alpine3.20` | Install dependencies | `node_modules/` |
+| `dev` | `node:22.12-alpine3.20` | Development with hot reload | Full source + deps |
+| `build` | `node:22.12-alpine3.20` | Compile TypeScript | `dist/` + prod deps |
+| `production` | `node:22.12-alpine3.20` | Minimal runtime image | `dist/` + prod deps (non-root) |
+
+**Why multi-stage?**
+- Development image: ~800 MB (includes TypeScript, source code, dev tools)
+- Production image: ~150 MB (compiled JS only, no build tools)
+- **80% size reduction** in production
+
+### Performance Optimization
+
+#### Development
+
+- **Volume mounts**: Instant code sync, no rebuild needed
+- **Hot reload**: NestJS watches `.ts` files automatically
+- **Anonymous volumes**: `/app/node_modules` prevents host override
+
+#### Production
+
+- **Multi-stage build**: Minimal image size
+- **Production deps only**: `npm prune --production` removes dev dependencies
+- **Non-root user**: Security best practice
+- **Health checks**: Orchestrator can detect unhealthy containers
 
 ---
 
