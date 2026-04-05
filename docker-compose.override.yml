@@ -1,0 +1,9 @@
+services:
+  app:
+    environment:
+      - DEBUG=app:*
+      - LOG_LEVEL=debug
+    ports:
+      - "9229:9229"
+    security_opt:
+      - no-new-privileges:true
