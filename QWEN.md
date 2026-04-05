@@ -1,0 +1,2 @@
+## Qwen Added Memories
+- Project: CoLive SG Backend (NestJS OpenMap Web Service) at /Users/rae-anandres/Projects/BE/node/co-live-sg-backend. Status: Fully implemented and tested. 5 REST endpoints (search, revgeocode, routingsvc, nearbysvc, gettoken) integrating Nominatim, OSRM, and Overpass APIs. 41 passing tests with ~89% coverage. Build succeeds. Comprehensive README documentation written. All todos completed.
